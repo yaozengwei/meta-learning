@@ -59,7 +59,7 @@ def get_parser():
     parser.add_argument(
         "--update-meta-every-k-epoch",
         type=int,
-        default=5,
+        default=10,
         help="Update the meta_model at every k epochs.",
     )
 
@@ -106,7 +106,7 @@ def get_parser():
     parser.add_argument(
         "--meta-batch-size",
         type=float,
-        default=512,
+        default=768,
         help="Batch size for training the meta model",
     )
 
@@ -149,6 +149,7 @@ def get_params() -> AttributeDict:
             "best_epoch": -1,
             "batch_idx_main": 0,
             "batch_idx_meta": 0,
+            "epoch_idx_meta": 0,
             "log_interval": 10,
             "meta_in_channels": 6,
             "meta_hidden_channels": 32,
@@ -182,7 +183,7 @@ def get_data_loaders(params: AttributeDict):
     tot_samples = len(ori_train_set)
     indexes = list(range(tot_samples))
     random.shuffle(indexes)
-    train_sampels = int(tot_samples * 0.8)
+    train_sampels = int(tot_samples * 0.6)
     indexes_train = indexes[:train_sampels]
     indexes_dev = indexes[train_sampels:]
 
@@ -341,6 +342,7 @@ def accumulate_params_grads(
             )
 
     dev_params_grads = get_params_grads(main_optimizer, main_params_names)
+    main_optimizer.zero_grad()
     return dev_params_grads
 
 
@@ -351,6 +353,7 @@ def train_meta_model(
     meta_optimizer: torch.optim.Optimizer,
     meta_scheduler: LRSchedulerType,
     meta_train_loader: torch.utils.data.DataLoader,
+    main_params_names: List[str],
     params: AttributeDict,
     tb_writer: Optional[SummaryWriter] = None,
 ) -> List[torch.Tensor]:
@@ -358,7 +361,11 @@ def train_meta_model(
     model.train()
     device = next(model.parameters()).device
 
-    main_params = [param for name, param in model.main_model.named_parameters()]
+    main_params = []
+    for i, (name, param) in enumerate(model.main_model.named_parameters()):
+        assert name == main_params_names[i]
+        main_params.append(param)
+
     meta_params = list(model.meta_model.parameters())
 
     tot_loss = 0
@@ -372,7 +379,6 @@ def train_meta_model(
         main_loss = F.cross_entropy(main_out, targets)
         loss = main_loss + aux_loss
 
-        # should sort the parameters as in batch_groups
         train_params_grads = torch.autograd.grad(
             outputs=[loss],
             inputs=main_params,
@@ -393,7 +399,7 @@ def train_meta_model(
         if batch_idx % params.log_interval == 0:
             cur_lr = max(meta_scheduler.get_last_lr())
             logging.info(
-                f"Epoch {params.cur_epoch}, batch {batch_idx}, "
+                f"Meta-epoch {params.epoch_idx_meta}, batch {batch_idx}, "
                 f"meta_loss {meta_loss.item():.3}, tot_meta_loss {(tot_loss/(batch_idx+1)):.3}, "
                 f"lr: {cur_lr:.3}"
             )
@@ -458,7 +464,7 @@ def main():
         lr=params.base_lr,  # should have no effect
         clipping_scale=2.0,
     )
-    meta_scheduler = Eden(meta_optimizer, params.lr_batches, params.lr_epochs)
+    meta_scheduler = Eden(meta_optimizer, 1000, 10)
 
     if checkpoints and "main_optimizer" in checkpoints:
         logging.info("Loading main_optimizer state dict")
@@ -523,17 +529,20 @@ def main():
                 main_params_names=main_params_names,
             )
 
-            meta_scheduler.step_epoch(epoch // params.update_meta_every_k_epoch - 1)
-            train_meta_model(
-                model=model,
-                dev_params_grads=dev_params_grads,
-                params_lrs=params_lrs,
-                meta_optimizer=meta_optimizer,
-                meta_scheduler=meta_scheduler,
-                meta_train_loader=meta_train_loader,
-                params=params,
-                tb_writer=tb_writer,
-            )
+            for epoch_meta in range(1, 4):
+                params.epoch_idx_meta += 1
+                meta_scheduler.step_epoch(params.epoch_idx_meta - 1)
+                train_meta_model(
+                    model=model,
+                    dev_params_grads=dev_params_grads,
+                    params_lrs=params_lrs,
+                    meta_optimizer=meta_optimizer,
+                    meta_scheduler=meta_scheduler,
+                    meta_train_loader=meta_train_loader,
+                    main_params_names=main_params_names,
+                    params=params,
+                    tb_writer=tb_writer,
+                )
 
         logging.info("Saving checkpoint")
         save_checkpoint(

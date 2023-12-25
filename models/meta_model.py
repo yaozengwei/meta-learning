@@ -20,23 +20,26 @@ from typing import Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class MetaModel(nn.Module):
     def __init__(self, in_channels: int = 6, hidden_channels: int = 32) -> None:
         # in_channels = 6 since we take all 2-element combinations in 4 elements
         super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(
-                in_channels, hidden_channels, kernel_size=3, padding=1, bias=False
-            ),
-            nn.BatchNorm2d(hidden_channels),
-            nn.ReLU(),
-            nn.Conv2d(
-                hidden_channels, hidden_channels, kernel_size=3, padding=1, bias=False
-            ),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
+        self.conv1 = nn.Conv2d(
+            in_channels, hidden_channels, kernel_size=3, stride=1, padding=1, bias=False
+        )
+        self.bn1 = nn.BatchNorm2d(hidden_channels)
+        self.conv2 = nn.Conv2d(
+            hidden_channels, hidden_channels, kernel_size=3, stride=1, padding=1, bias=False
+        )
+        self.bn2 = nn.BatchNorm2d(hidden_channels)
+
+        self.shortcut = nn.Sequential(
+            nn.Conv2d(in_channels, hidden_channels,
+                      kernel_size=1, stride=1, bias=False),
+            nn.BatchNorm2d(hidden_channels)
         )
 
         # initialize to 0
@@ -45,7 +48,12 @@ class MetaModel(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, C, H, W)
-        out = self.conv(x).mean(dim=(2, 3))  # (B, C_)
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out = out + self.shortcut(x)
+        out = F.relu(out)
+
+        out = out.mean(dim=(2, 3))  # (B, C_)
         out = self.proj(out).mean()  # (B,)
 
         return out

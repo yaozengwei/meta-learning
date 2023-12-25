@@ -356,6 +356,7 @@ def load_checkpoint_if_available(
         "best_accuracy",
         "batch_idx_main",
         "batch_idx_meta",
+        "epoch_idx_meta",
     ]
     for k in keys:
         params[k] = saved_params[k]
@@ -555,7 +556,6 @@ def get_params_grads(
         for group, group_params_names in zip(optim.param_groups, optim.parameters_names):
             with optim.batched_params(group["params"], group_params_names) as batches:
                 for p, state, p_names in batches:
-                    # TODO: shall we care about the None grads before stacked into batches?
                     grads = p.grad.unbind(0)
                     named_params_grads.update({n: g for n, g in zip(p_names, grads)})
 
@@ -576,8 +576,6 @@ def cal_meta_loss(
     dev_param_grads: List[torch.Tensor],
     param_lrs: List[torch.Tensor],
 ):
-    # import pdb
-    # pdb.set_trace()
     assert len(train_param_grads) == len(dev_param_grads) == len(param_lrs)
     total = 0
     for grad_a, grad_b, lr in zip(train_param_grads, dev_param_grads, param_lrs):
