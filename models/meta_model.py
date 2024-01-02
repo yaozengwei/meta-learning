@@ -36,25 +36,18 @@ class MetaModel(nn.Module):
         )
         self.bn2 = nn.BatchNorm2d(hidden_channels)
 
-        self.shortcut = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_channels,
-                      kernel_size=1, stride=1, bias=False),
-            nn.BatchNorm2d(hidden_channels)
-        )
-
-        # initialize to 0
         self.proj = nn.Linear(hidden_channels, 1, bias=False)
-        self.proj.weight.data.fill_(0.0)
+        # self.proj.weight.data.fill_(0.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, C, H, W)
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
-        out = out + self.shortcut(x)
         out = F.relu(out)
 
         out = out.mean(dim=(2, 3))  # (B, C_)
-        out = self.proj(out).mean()  # (B,)
+        out = self.proj(out)  # (B, 1)
+        out = out.mean()
 
         return out
 

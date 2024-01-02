@@ -106,7 +106,7 @@ def get_parser():
     parser.add_argument(
         "--meta-batch-size",
         type=float,
-        default=768,
+        default=512,
         help="Batch size for training the meta model",
     )
 
@@ -120,7 +120,7 @@ def get_parser():
     parser.add_argument(
         "--mask-ratio",
         type=float,
-        default=0.5,
+        default=0.4,
         help="Mask ratio used to generate duplicated images",
     )
 
@@ -151,6 +151,7 @@ def get_params() -> AttributeDict:
             "batch_idx_meta": 0,
             "epoch_idx_meta": 0,
             "log_interval": 10,
+            "dev_ratio": 0.3,
             "meta_in_channels": 6,
             "meta_hidden_channels": 32,
         }
@@ -175,15 +176,13 @@ def get_data_loaders(params: AttributeDict):
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
 
-    # data_root = "/star-data/zengwei/download/cifar10/"
-
     ori_train_set = torchvision.datasets.CIFAR10(
         root=params.data_root, train=True, download=True, transform=transform_train)
 
     tot_samples = len(ori_train_set)
     indexes = list(range(tot_samples))
     random.shuffle(indexes)
-    train_sampels = int(tot_samples * 0.6)
+    train_sampels = int(tot_samples * (1 - params.dev_ratio))
     indexes_train = indexes[:train_sampels]
     indexes_dev = indexes[train_sampels:]
 
@@ -194,7 +193,7 @@ def get_data_loaders(params: AttributeDict):
     meta_train_loader = torch.utils.data.DataLoader(
         train_set, batch_size=params.meta_batch_size, shuffle=True, num_workers=2)
 
-    # TODO: not sure to set shuffle to True of False
+    # TODO: set shuffle to True or False
     dev_set = torch.utils.data.Subset(ori_train_set, indexes_dev)
     dev_loader = torch.utils.data.DataLoader(
         dev_set, batch_size=params.main_batch_size, shuffle=True, num_workers=2)
@@ -233,7 +232,12 @@ def train_one_epoch(
 
         main_out, aux_loss = model(inputs)
         main_loss = F.cross_entropy(main_out, targets)
-        loss = main_loss + aux_loss
+
+        if params.batch_idx_meta > 0:
+            loss = main_loss + aux_loss
+        else:
+            # when meta_model has not learned anything
+            loss = main_loss
 
         main_optimizer.zero_grad()
         loss.backward()
@@ -377,6 +381,7 @@ def train_meta_model(
 
         main_out, aux_loss = model(inputs)
         main_loss = F.cross_entropy(main_out, targets)
+
         loss = main_loss + aux_loss
 
         train_params_grads = torch.autograd.grad(
@@ -529,7 +534,7 @@ def main():
                 main_params_names=main_params_names,
             )
 
-            for epoch_meta in range(1, 4):
+            for _ in range(3):
                 params.epoch_idx_meta += 1
                 meta_scheduler.step_epoch(params.epoch_idx_meta - 1)
                 train_meta_model(
