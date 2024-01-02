@@ -37,6 +37,8 @@ class MetaModel(nn.Module):
         self.bn2 = nn.BatchNorm2d(hidden_channels)
 
         self.proj = nn.Linear(hidden_channels, 1, bias=False)
+        # I found that initializing the weights to zero cause instability at the start,
+        # so I just don't add the meta_loss to the main_loss before the meta_model learned something.
         # self.proj.weight.data.fill_(0.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -46,7 +48,7 @@ class MetaModel(nn.Module):
         out = F.relu(out)
 
         out = out.mean(dim=(2, 3))  # (B, C_)
-        out = self.proj(out)  # (B, 1)
+        out = self.proj(out) ** 2  # (B, 1)
         out = out.mean()
 
         return out
