@@ -59,14 +59,14 @@ def get_parser():
     parser.add_argument(
         "--update-meta-every-k-epoch",
         type=int,
-        default=10,
+        default=1,
         help="Update the meta_model at every k epochs.",
     )
 
     parser.add_argument(
         "--num-epochs",
         type=int,
-        default=100,
+        default=50,
         help="Number of epochs to train.",
     )
 
@@ -151,7 +151,7 @@ def get_params() -> AttributeDict:
             "batch_idx_meta": 0,
             "epoch_idx_meta": 0,
             "log_interval": 10,
-            "dev_ratio": 0.3,
+            "dev_ratio": 0.1,
             "meta_in_channels": 6,
             "meta_hidden_channels": 32,
         }
@@ -230,14 +230,14 @@ def train_one_epoch(
         inputs, targets = inputs.to(device), targets.to(device)
         inputs, targets = duplicate_and_mask(inputs, targets, params.mask_ratio)
 
-        main_out, aux_loss = model(inputs)
-        main_loss = F.cross_entropy(main_out, targets)
-
         if params.batch_idx_meta > 0:
-            loss = main_loss + aux_loss
+            main_out, aux_loss = model(inputs)
         else:
-            # when meta_model has not learned anything
-            loss = main_loss
+            main_out = model.main_model(inputs)
+            aux_loss = torch.tensor(0.0)
+
+        main_loss = F.cross_entropy(main_out, targets)
+        loss = main_loss + aux_loss
 
         main_optimizer.zero_grad()
         loss.backward()
@@ -469,7 +469,7 @@ def main():
         lr=params.base_lr,  # should have no effect
         clipping_scale=2.0,
     )
-    meta_scheduler = Eden(meta_optimizer, 1000, 10)
+    meta_scheduler = Eden(meta_optimizer, params.lr_batches, params.lr_epochs)
 
     if checkpoints and "main_optimizer" in checkpoints:
         logging.info("Loading main_optimizer state dict")
@@ -521,7 +521,7 @@ def main():
         logging.info(f"Testing epoch {epoch}")
         test(model=model, test_loader=test_loader, params=params, tb_writer=tb_writer)
 
-        if epoch % params.update_meta_every_k_epoch == 0:
+        if epoch % params.update_meta_every_k_epoch == 0 and epoch >= 5:
             # start to optimize the meta_model
             params_lrs = get_params_lrs(main_optimizer, main_params_names)
 
@@ -534,7 +534,7 @@ def main():
                 main_params_names=main_params_names,
             )
 
-            for _ in range(3):
+            for _ in range(1):
                 params.epoch_idx_meta += 1
                 meta_scheduler.step_epoch(params.epoch_idx_meta - 1)
                 train_meta_model(

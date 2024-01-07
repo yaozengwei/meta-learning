@@ -540,7 +540,11 @@ def get_params_lrs(
         for group, group_params_names in zip(optim.param_groups, optim.parameters_names):
             with optim.batched_params(group["params"], group_params_names) as batches:
                 for p, state, p_names in batches:
-                    lrs = state["param_rms"] / (state["exp_avg_sq"].sqrt() + group["eps"])
+                    numel = p.numel() // p.shape[0]
+                    if numel > 1:
+                        lrs = state["param_rms"] / (state["exp_avg_sq"].sqrt() + group["eps"])
+                    else:
+                        lrs = 1.0 / (state["exp_avg_sq"].sqrt() + group["eps"])
                     lrs = lrs.unbind(0)
                     named_params_lrs.update({n: lr for n, lr in zip(p_names, lrs)})
 
@@ -577,11 +581,10 @@ def cal_meta_loss(
     param_lrs: List[torch.Tensor],
 ):
     assert len(train_param_grads) == len(dev_param_grads) == len(param_lrs)
-    total = 0
-    for grad_a, grad_b, lr in zip(train_param_grads, dev_param_grads, param_lrs):
-        total = total + cos_similarity(grad_a, grad_b, lr)
-
-    return -total / len(train_param_grads)
+    train_param_grads = torch.cat([g.flatten() for g in train_param_grads], dim=0)
+    dev_param_grads = torch.cat([g.flatten() for g in dev_param_grads], dim=0)
+    param_lrs = torch.cat([g.flatten() for g in param_lrs], dim=0)
+    return -cos_similarity(train_param_grads, dev_param_grads, param_lrs)
 
 
 def duplicate_and_mask(

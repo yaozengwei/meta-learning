@@ -30,11 +30,13 @@ class MetaModel(nn.Module):
         self.conv1 = nn.Conv2d(
             in_channels, hidden_channels, kernel_size=3, stride=1, padding=1, bias=False
         )
-        self.bn1 = nn.BatchNorm2d(hidden_channels)
         self.conv2 = nn.Conv2d(
             hidden_channels, hidden_channels, kernel_size=3, stride=1, padding=1, bias=False
         )
-        self.bn2 = nn.BatchNorm2d(hidden_channels)
+        # self.swoosh1 = SwooshR()
+        # self.swoosh2 = SwooshR()
+        self.relu1 = nn.ReLU()
+        self.relu2 = nn.ReLU()
 
         self.proj = nn.Linear(hidden_channels, 1, bias=False)
         # I found that initializing the weights to zero cause instability at the start,
@@ -43,11 +45,13 @@ class MetaModel(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, C, H, W)
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        out = F.relu(out)
+        # out = self.swoosh1(self.conv1(x))
+        # out = self.swoosh2(self.conv2(out))
+        # out = self.conv1(x)
+        out = self.relu1(self.conv1(x))
+        out = self.relu2(self.conv2(out))
 
-        out = out.mean(dim=(2, 3))  # (B, C_)
+        out = out.mean(dim=(2, 3))   # (B, C_)
         out = self.proj(out) ** 2  # (B, 1)
         out = out.mean()
 
@@ -90,3 +94,10 @@ class Model(nn.Module):
         aux_loss = self.meta_model(inner_prod)
 
         return main_out, aux_loss
+
+
+class SwooshR(torch.nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Return Swoosh-R activation."""
+        zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
+        return torch.logaddexp(zero, x - 1.0) - 0.08 * x - 0.313261687
